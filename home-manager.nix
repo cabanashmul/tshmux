@@ -89,6 +89,10 @@ let
       "set -g status-keys ${if cfg.enableViCopyMode then "vi" else "emacs"}"
       "set -g @continuum-restore '${if cfg.enableSessionRestore then "on" else "off"}'"
       "set -g @continuum-save-interval '${toString cfg.sessionRestoreInterval}'"
+      # M-r = restore the last save. Confirm first: restore rewrites the whole
+      # session layout, and an accidental keypress is expensive. Mirrors the
+      # existing M-X confirm-before pattern.
+      "bind -n M-r confirm-before -p \"Restore tmux sessions from last save? (y/n)\" \"run-shell ${pluginSet.tmuxPluginResurrect}/share/tmux-plugins/tmuxPluginResurrect/scripts/restore.sh\""
       "set -g status-position ${cfg.status.position}"
       # continuum's autosave is driven by a #() status interpolation, and it
       # injects that into status-right at plugin load. status-right is set
