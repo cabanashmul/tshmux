@@ -1,4 +1,4 @@
-{ tmuxPluginTpm, tmuxPluginSensible, tmuxPluginContinuum, tmuxPluginYank, tmuxPluginNavigator }:
+{ tmuxPluginSensible, tmuxPluginContinuum, tmuxPluginYank, tmuxPluginNavigator, tmuxPluginResurrect }:
 
 { config, lib, pkgs, ... }:
 
@@ -6,19 +6,26 @@ let
   inherit (lib) concatStringsSep mkEnableOption mkIf mkOption optionalString types optional;
   cfg = config.programs.tshmux;
 
+  # tpm is intentionally absent: it is a plugin *manager*, and every plugin
+  # here is nix-managed, so it has nothing to manage. Its entry point is a
+  # bare `tpm` script rather than a *.tmux file, so it can't be run-shell'd
+  # the way the others are anyway.
   pluginSources = {
     inherit
-      tmuxPluginTpm
       tmuxPluginSensible
       tmuxPluginContinuum
       tmuxPluginYank
-      tmuxPluginNavigator;
+      tmuxPluginNavigator
+      tmuxPluginResurrect;
   };
 
   mkPlugin = name: src: pkgs.tmuxPlugins.mkTmuxPlugin {
     pluginName = name;
     version = src.rev or "dev";
     inherit src;
+    # tmux-resurrect's repo links its test harness into an un-fetched git
+    # submodule, leaving dangling symlinks that nix's fixup phase rejects.
+    dontCheckForBrokenSymlinks = true;
   };
 
   pluginSet = pkgs.lib.mapAttrs mkPlugin pluginSources;
@@ -27,9 +34,25 @@ let
     paths = builtins.attrValues pluginSet;
   };
 
+  # Each plugin repo names its own entry file. <attrName>.tmux is NOT a safe
+  # assumption: tmux-continuum ships continuum.tmux, vim-tmux-navigator ships
+  # vim-tmux-navigator.tmux, and so on. Pointing run-shell at the wrong name
+  # fails silently, which is how every plugin here was dead while still
+  # looking configured.
+  pluginEntryFile = {
+    tmuxPluginSensible = "sensible.tmux";
+    tmuxPluginContinuum = "continuum.tmux";
+    tmuxPluginYank = "yank.tmux";
+    tmuxPluginNavigator = "vim-tmux-navigator.tmux";
+    tmuxPluginResurrect = "resurrect.tmux";
+  };
+
   pluginLoader = pkgs.lib.concatMapStringsSep "\n"
-    (p: "run-shell ${p}/share/tmux-plugins/${p.pluginName}/${p.pluginName}.tmux")
-    (builtins.attrValues pluginSet);
+    (name: "run-shell ${pluginSet.${name}}/share/tmux-plugins/${name}/${pluginEntryFile.${name}}")
+    (builtins.attrNames pluginSet);
+
+  # The periodic save trigger tmux-continuum normally installs in status-right.
+  continuumSaveInterp = "#(${pluginSet.tmuxPluginContinuum}/share/tmux-plugins/tmuxPluginContinuum/scripts/continuum_save.sh)";
 
   clipboardScript = pkgs.writeShellScript "clipboard-copy" ''
     if [ -n "$WAYLAND_DISPLAY" ] && command -v wl-copy >/dev/null 2>&1; then
@@ -65,8 +88,14 @@ let
       "set -g mode-keys ${if cfg.enableViCopyMode then "vi" else "emacs"}"
       "set -g status-keys ${if cfg.enableViCopyMode then "vi" else "emacs"}"
       "set -g @continuum-restore '${if cfg.enableSessionRestore then "on" else "off"}'"
+      "set -g @continuum-save-interval '${toString cfg.sessionRestoreInterval}'"
       "set -g status-position ${cfg.status.position}"
-      "set -g status-left \"${cfg.status.left}\""
+      # continuum's autosave is driven by a #() status interpolation, and it
+      # injects that into status-right at plugin load. status-right is set
+      # afterwards here and again by vigil.tmux, which would wipe it and leave
+      # saves never firing -- so carry the trigger on status-left, which this
+      # module owns and nothing else rewrites.
+      "set -g status-left \"${cfg.status.left}${optionalString cfg.enableSessionRestore continuumSaveInterp}\""
       "set -g status-right \"${cfg.status.right}\""
       "set -g status-style \"fg=#{@color-yellow},bg=#{@color-black}\""
       "set -g message-style \"fg=#{@color-gray-light},bg=#{@color-black}\""
@@ -145,6 +174,12 @@ in {
     enableSessionRestore = mkOption {
       type = types.bool;
       default = true;
+    };
+
+    sessionRestoreInterval = mkOption {
+      type = types.ints.positive;
+      default = 5;
+      description = "Minutes between tmux-continuum automatic saves.";
     };
 
     clipboard.enable = mkOption {

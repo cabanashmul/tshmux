@@ -24,6 +24,10 @@
       url = "github:christoomey/vim-tmux-navigator";
       flake = false;
     };
+    tmuxPluginResurrect = {
+      url = "github:tmux-plugins/tmux-resurrect";
+      flake = false;
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, ... }:
@@ -32,11 +36,11 @@
       forEachSystem = nixpkgs.lib.genAttrs systems;
       pluginSources = {
         inherit (inputs)
-          tmuxPluginTpm
           tmuxPluginSensible
           tmuxPluginContinuum
           tmuxPluginYank
-          tmuxPluginNavigator;
+          tmuxPluginNavigator
+          tmuxPluginResurrect;
       };
     in {
       packages = forEachSystem (system:
@@ -48,6 +52,9 @@
             pluginName = name;
             version = src.rev or "dev";
             inherit src;
+            # tmux-resurrect's repo links its test harness into an un-fetched
+            # git submodule, leaving dangling symlinks nix's fixup rejects.
+            dontCheckForBrokenSymlinks = true;
           };
           pluginSet = pkgs.lib.mapAttrs (n: v: mkPlugin n v) pluginSources;
           allPlugins = pkgs.symlinkJoin {
@@ -97,11 +104,11 @@
       homeManagerModules.default = import ./home-manager.nix {
         inherit
           (inputs)
-          tmuxPluginTpm
           tmuxPluginSensible
           tmuxPluginContinuum
           tmuxPluginYank
-          tmuxPluginNavigator;
+          tmuxPluginNavigator
+          tmuxPluginResurrect;
       };
     };
 }
